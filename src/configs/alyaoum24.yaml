@@ -1,0 +1,121 @@
+site_key: alyaoum24
+name: "Alyaoum24"
+base_url: "https://alyaoum24.com"
+language: ar
+timeout: 15
+max_retries: 3
+delay_seconds: 1.5
+use_playwright: true
+
+headers:
+  User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+  Accept-Language: "ar,en-US;q=0.9"
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+  Connection: "keep-alive"
+
+categories:
+  home: "/"
+  societe: "/news/01-%d8%a7%d9%84%d8%b1%d8%a6%d9%8a%d8%b3%d9%8a%d8%a9/community"
+  politique: "/news/08-%d8%a3%d8%ae%d8%a8%d8%a7%d8%b1-%d8%b3%d9%8a%d8%a7%d8%b3%d9%8a%d8%a9"
+  sports: "/news/sport"
+  sports_world_cup: "/news/sport/07-%d9%83%d8%a3%d8%b3-%d9%84%d8%b9%d8%a7%d9%84%d9%85"
+  international: "/news/03-%d8%a3%d8%ae%d8%a8%d8%a7%d8%b1-%d8%af%d9%88%d9%84%d9%8a%d8%a9"
+  people: "/news/people"
+  women: "/news/women"
+  opinion: "/news/11-%d8%a7%d9%84%d8%b1%d8%a3%d9%8a"
+  videos: "/videos"
+
+selectors:
+  article_links:
+    - "article h2 a"
+    - "h2 a"               # main links in articles
+    - "article a[href]"    # fallback
+    - "h3.entry-title a"
+    - "div.cat-box a"
+    - "ul.listing-archive li.content-archive a"
+    - "div.post-title a"
+    - "article a"
+    - "article.post-item a"
+    - "ul.listing-archive li.content-archive div.descriptionPostArchive a"
+    - "div.readMore ul li div.descriptionReadMore a"
+
+  content:
+    - "div.node-content"
+    - "div.entry-content"
+    - "div.field-item"
+    - "article"
+    - "div.post-content"
+    - "div.full-content"
+    - "div.single-content"
+    - "div.article-content"
+
+  content_remove:
+    - ".ads"
+    - ".advertisement"
+    - "iframe"
+    - "script"
+    - ".social-share"
+    - ".wp-block-embed"
+    - ".sharedaddy"
+    - ".post-navigation"
+    - ".tags-links"
+
+  content_text_elems:
+    - "p"
+    - "div"
+    - "li"
+
+  title:
+    - "h1.article-title"
+    - "meta[property='og:title']"
+    - "h1.entry-title"
+    - "h1.title"
+    - "h2.title"
+
+  date: 
+    - "meta[property='article:published_time']"
+    - "span.date"
+    - "time"
+    - "div.post-meta" 
+  author:
+    - "div.nameAuthor span a"
+    - "span.author-name"
+    - "div.author-name"
+    - "meta[name='author']"
+    - "div.post-meta"
+    - "span.author"
+    - ".author-name"
+
+  category:
+    - "meta[property='article:section']"
+    - "a.category-link"
+    - "a.breadcrumb-link"
+    - ".breadcrumb a"
+    - ".cat-links a"
+
+  image:
+    - "meta[property='og:image']"
+    - "div.single-featured img"
+    - "img.featured-image"
+
+filters:
+  exclude_substrings:
+    - "/video"
+    - "/photos"
+    - "/tag/"
+    - "/category/uncategorized"
+
+pagination:
+  type: "suffix"
+  first_page: ""
+  next_page: "page/{page}/"
+
+# --- Postprocessing Regex ---
+postprocess:
+  author:
+    regex: "^(.*?)\\s+\\(.*?\\)"   # captures the name before "(...)"
+  date:
+    regex: "(\\d{1,2} \\S+ \\d{4} - \\d{2}:\\d{2})"  # captures "13 أغسطس 2025 - 14:00"
+# Add these lines:
+take_screenshots: true  # Enable screenshots
+screenshot_timeout: 10000  # 10 seconds timeout

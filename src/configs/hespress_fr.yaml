@@ -1,0 +1,71 @@
+site_key: hespress_fr
+name: Hespress Français
+language: fr
+base_url: "https://fr.hespress.com/"
+headers:
+  User-Agent: "NewsScraperBot/1.0 (+https://example.com/hespress_fr)"
+  Accept-Language: "fr,en-US;q=0.8"
+timeout: 15
+max_retries: 3
+delay_seconds: 1.6
+
+categories:
+  economie: "/economie/"
+  politique: "/politique/"
+  sport: "/sport/"
+  home: "/"
+
+pagination:
+  type: suffix
+  first_page: ""
+  next_page: "page/{page}/"
+
+filters:
+  exclude_substrings:
+    - "/auteur/"
+    - "/tag/"
+    - "/wp-admin/"
+    - "?print"
+    - "utm"
+
+selectors:
+  article_links:
+    - ".overlay.card a.stretched-link"
+    - "article.card a.card-link"
+    - "h2 a"
+  title:
+    - "h1.entry-title"
+    - "h1.post-title"
+  content:
+    - "div.entry-content"
+    - ".article-content"
+    - "article"
+    - ".content"
+    - ".entry-content"
+  content_remove:
+    - ".sharedaddy"
+    - ".post-share"
+    - ".tags"
+    - ".related"
+    - "script"
+    - "style"
+  content_text_elems:
+    - p
+    - li
+    - div
+  author:
+    - ".author a"
+    - ".byline a"
+  date:
+    - { css: "time[datetime]", attr: "datetime" }
+    - { css: 'meta[property="article:published_time"]', attr: "content" }
+
+  category:
+    - ".breadcrumb .breadcrumb-item:last-child a"
+    - ".post-categories a"
+    - 'meta[property="article:section"]'
+  image:
+    - { css: 'meta[property="og:image"]', attr: "content" }
+    - "img.wp-post-image"
+take_screenshots: true  # Enable screenshots
+screenshot_timeout: 10000  # 10 seconds timeout
