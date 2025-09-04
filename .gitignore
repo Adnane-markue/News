@@ -6,3 +6,4 @@ articles*
 urls_problem.csv
 support_titres.txt
 logs/
+*__pycache__/
