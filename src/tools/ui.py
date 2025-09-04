@@ -240,7 +240,7 @@ class CSVProcessorWorker(QThread):
                  filename_column: Optional[str], support_column: Optional[str],
                  batch_size: int, delay: float, max_workers: int, 
                  screenshot_type: str, start_row: int, selected_rows: List[int],
-                 row_mapping: Dict[str, int]):  # Add row_mapping parameter
+                 row_mapping: Dict[str, int]):
         super().__init__()
         self.csv_path = csv_path
         self.url_column = url_column
@@ -253,58 +253,72 @@ class CSVProcessorWorker(QThread):
         self.screenshot_type = screenshot_type
         self.start_row = start_row
         self.selected_rows = selected_rows
-        self.row_mapping = row_mapping  # Map URLs to original row indices
-        self.row_status = {}  # Track status of each row: {row_index: True/False}
+        self.row_mapping = row_mapping
+        self.row_status = {}  # {row_index: (success_status, error_message)}
+        self.df = None  # Store the dataframe for real-time mapping
 
     def run(self):
         try:
             # Read the CSV file
-            df = pd.read_csv(self.csv_path)
+            self.df = pd.read_csv(self.csv_path)
             
             # Filter to only selected rows if any are selected
             if self.selected_rows:
-                df = df.iloc[self.selected_rows]
+                self.df = self.df.iloc[self.selected_rows]
+            
+            # Apply start row and batch size
+            total_rows = len(self.df)
+            
+            # Adjust start_row if it's beyond the dataframe length
+            if self.start_row >= total_rows:
+                self.error_occurred.emit(f"La ligne de départ ({self.start_row}) dépasse le nombre de lignes disponibles ({total_rows})")
+                return
+                
+            # Apply start row (convert from 1-based to 0-based indexing)
+            start_index = self.start_row - 1 if self.start_row > 0 else 0
+            self.df = self.df.iloc[start_index:]
             
             # Apply batch size limit
-            if self.batch_size and self.batch_size < len(df):
-                df = df.head(self.batch_size)
+            if self.batch_size and self.batch_size < len(self.df):
+                self.df = self.df.head(self.batch_size)
             
             # Save filtered CSV to temporary file
             os.makedirs(self.output_dir, exist_ok=True)
             temp_csv_path = os.path.join(self.output_dir, "temp_selected_data.csv")
-            df.to_csv(temp_csv_path, index=False)
+            self.df.to_csv(temp_csv_path, index=False)
             
-            # Custom progress callback that maps URLs back to original row indices
-            def progress_callback(processed: int, total: int, success: int):
-                # For simplicity, we'll update status for all rows at once
-                # In a real implementation, you'd track individual URL success
-                row_status = {}
-                for i, url in enumerate(df[self.url_column].head(processed)):
-                    if url in self.row_mapping:
-                        row_idx = self.row_mapping[url]
-                        # Assume success for all processed URLs (simplified)
-                        # In a real implementation, you'd track individual success
-                        row_status[row_idx] = (i < success)
+            # REAL-TIME progress callback function
+            def progress_callback(processed: int, total: int, success: int, row_status: dict):
+                # Convert row indices from the chunk to global indices
+                global_row_status = {}
                 
-                self.progress_updated.emit(processed, total, success, row_status)
-                time.sleep(0.01)
+                for chunk_index, (success_status, error_msg) in row_status.items():
+                    # Get the URL for this chunk index
+                    if chunk_index < len(self.df):
+                        url = self.df.iloc[chunk_index][self.url_column]
+                        if pd.notna(url) and str(url) in self.row_mapping:
+                            global_index = self.row_mapping[str(url)]
+                            global_row_status[global_index] = (success_status, error_msg)
+                
+                # Emit progress update with global row indices
+                self.progress_updated.emit(processed, total, success, global_row_status)
 
-            # Call the screenshot function with progress callback
+            # Call the screenshot function with REAL progress callback
             results_path = process_csv_screenshots(
                 csv_path=temp_csv_path,
                 url_column=self.url_column,
                 output_dir=self.output_dir,
                 filename_column=self.filename_column,
                 support_column=self.support_column,
-                batch_size=len(df),  # Process all rows in the filtered CSV
+                batch_size=len(self.df),
                 delay=self.delay,
                 max_workers=self.max_workers,
                 screenshot_type=self.screenshot_type,
-                start_row=0,  # Start from beginning of filtered CSV
-                progress_callback=progress_callback
+                start_row=0,
+                progress_callback=progress_callback  # REAL-TIME callback!
             )
             
-            # After processing, read the results to get actual success/failure status
+            # After processing, read the results to get final status
             if results_path and os.path.exists(results_path):
                 results_df = pd.read_csv(results_path)
                 for _, row in results_df.iterrows():
@@ -312,11 +326,13 @@ class CSVProcessorWorker(QThread):
                     if url in self.row_mapping:
                         row_idx = self.row_mapping[url]
                         success = row.get('screenshot_success', False) or row.get('content_screenshot_success', False)
-                        self.row_status[row_idx] = success
+                        error_msg = row.get('error', '') if not success else ""
+                        
+                        self.row_status[row_idx] = (success, error_msg)
                 
                 # Send final update with actual status
-                self.progress_updated.emit(len(df), len(df), 
-                                         sum(self.row_status.values()), self.row_status)
+                success_count = sum(1 for status in self.row_status.values() if status[0])
+                self.progress_updated.emit(len(self.df), len(self.df), success_count, self.row_status)
             
             # Clean up temporary file
             if os.path.exists(temp_csv_path):
@@ -332,9 +348,9 @@ class ColorizedPandasModel(QAbstractTableModel):
     def __init__(self, df=pd.DataFrame(), parent=None):
         super().__init__(parent)
         self._df = df
-        self._df_full = df.copy()  # Keep a copy of the full dataframe
-        self.processed_rows = {}  # Track processed row indices: {row_index: success_status}
-        self.selected_rows = set()  # Track selected row indices
+        self._df_full = df.copy()
+        self.processed_rows = {}  # {row_index: (success_status, error_message)}
+        self.selected_rows = set()
 
     def rowCount(self, parent=None):
         return len(self._df)
@@ -355,13 +371,21 @@ class ColorizedPandasModel(QAbstractTableModel):
         # Color coding based on processing status
         elif role == Qt.BackgroundRole:
             if row in self.processed_rows:
-                if self.processed_rows[row]:
+                success_status, _ = self.processed_rows[row]
+                if success_status:
                     return QBrush(QColor(200, 255, 200))  # Light green for success
                 else:
                     return QBrush(QColor(255, 200, 200))  # Light red for failure
             elif row in self.selected_rows:
                 return QBrush(QColor(200, 200, 255))  # Light blue for selected
                 
+        # Add tooltip for error messages
+        elif role == Qt.ToolTipRole:
+            if row in self.processed_rows:
+                success_status, error_message = self.processed_rows[row]
+                if not success_status and error_message:
+                    return f"Erreur: {error_message}"
+                    
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
@@ -436,7 +460,7 @@ class ScreenshotUI(QMainWindow):
         self.worker = None
         self.api_worker = None
         self.output_dir = None
-        self.row_mapping = {}  # Map URLs to row indices for color coding
+        self.row_mapping = {}
 
         # Central widget
         central = QWidget()
@@ -502,7 +526,7 @@ class ScreenshotUI(QMainWindow):
         menubar = self.menuBar()
         
         # Fichier menu
-        file_menu = menubar.addMenu("Fichier")
+        file_menu = menubar.addMenu("Configuration")
         
         # Import CSV action
         import_csv_action = file_menu.addAction("Importer CSV")
@@ -717,7 +741,8 @@ class ScreenshotUI(QMainWindow):
                 self.model.update_processing_status(row_status)
             
             # Update status text
-            status_text = f"Traité: {processed}/{total} | Réussis: {success} | Échoués: {processed - success}"
+            failed = processed - success
+            status_text = f"Traité: {processed}/{total} | Réussis: {success} | Échoués: {failed}"
             self.status_bar.showMessage(status_text)
 
     def process_finished(self, results_path):
@@ -824,7 +849,7 @@ class ScreenshotUI(QMainWindow):
             screenshot_type=parameters['screenshot_type'],
             start_row=parameters['start_row'],
             selected_rows=selected_rows if not process_all else [],
-            row_mapping=self.row_mapping  # Pass the URL to row index mapping
+            row_mapping=self.row_mapping
         )
         
         # Connect worker signals

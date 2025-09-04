@@ -131,7 +131,8 @@ def process_chunk(
     screenshot_type: str,
     content_selector: Optional[str] = None,
     progress_interval: Optional[int] = None,
-    progress_callback: Optional[Callable] = None  # ADD THIS
+    progress_callback: Optional[Callable] = None,  # Change to comma
+    current_chunk: Optional[pd.DataFrame] = None  # ADD THIS
 ) -> List[dict]:
     """Process a chunk of the CSV file with accurate ETA calculation."""
     
@@ -172,12 +173,14 @@ def process_chunk(
                   "screenshot_taken_at": None,
                   "screenshot_success": False,
                   "content_screenshot_success": False,
-                  "processing_time": None,  # NEW: Track processing time
-                  "domain": None}           # NEW: Track domain
+                  "processing_time": None,
+                  "domain": None,
+                  "error": None}  # ADD ERROR FIELD
 
-        # ensure variables are defined
         screenshot_path = None
         content_path = None
+        success = False
+        error_msg = ""
 
         start_time = time.time()
 
@@ -185,6 +188,7 @@ def process_chunk(
             # NEW: Extract domain for tracking
             domain = get_domain(url)
             result["domain"] = domain
+            
             # Generate filename
             if filename_column and filename_column in row and pd.notna(row[filename_column]):
                 base_filename = sanitize_filename(row[filename_column])
@@ -206,17 +210,20 @@ def process_chunk(
             domain_selector = get_domain_selector(url)
 
             # domain lock
-            domain = get_domain(url)
             dlock = acquire_domain_lock(domain)
             with dlock:
                 try:
                     if screenshot_type == 'fullpage':
                         screenshot_path = take_screenshot(url, final_output_dir, filename)
-                        content_path = None
+                        success = screenshot_path is not None
+                        if not success:
+                            error_msg = "Échec de la capture complète"
 
                     elif screenshot_type == 'content':
                         content_path = take_article_only(url, final_output_dir, filename, selector=domain_selector)
-                        screenshot_path = None  # full page not taken
+                        success = content_path is not None
+                        if not success:
+                            error_msg = "Échec de la capture de contenu"
 
                     elif screenshot_type == 'both':
                         fullpage_dir = os.path.join(final_output_dir, 'fullpage')
@@ -226,6 +233,9 @@ def process_chunk(
 
                         screenshot_path = take_screenshot(url, fullpage_dir, filename)
                         content_path = take_article_only(url, content_dir, filename, selector=domain_selector)
+                        success = (screenshot_path is not None) or (content_path is not None)
+                        if not success:
+                            error_msg = "Échec des deux captures"
 
                     # Update result
                     elapsed = time.time() - start_time
@@ -235,7 +245,8 @@ def process_chunk(
                         "screenshot_taken_at": datetime.now().isoformat(),
                         "screenshot_success": screenshot_path is not None,
                         "content_screenshot_success": content_path is not None,
-                        "processing_time": elapsed  # NEW: Store processing time
+                        "processing_time": elapsed,
+                        "error": error_msg if not success else None
                     })
 
                     success_types = []
@@ -249,9 +260,40 @@ def process_chunk(
                     else:
                         print(f"⚠ Failed {url} in {elapsed:.2f}s")
 
+                    # REAL-TIME PROGRESS UPDATE - Send immediate feedback
+                    if progress_callback and current_chunk is not None:
+                        # Find the row index in the current chunk
+                        row_index = None
+                        for idx, (_, chunk_row) in enumerate(current_chunk.iterrows()):
+                            if str(chunk_row[url_column]) == str(url):
+                                row_index = idx
+                                break
+                        
+                        if row_index is not None:
+                            progress_callback(global_processed[0] + processed_in_chunk + 1, 
+                                            total_estimated_rows, 
+                                            global_success[0] + success_in_chunk + (1 if success else 0),
+                                            {row_index: (success, error_msg)})
+
                 except Exception as e:
                     elapsed = time.time() - start_time
+                    error_msg = f"Erreur: {str(e)}"
+                    result["error"] = error_msg
                     print(f"⚠️ Error screenshotting {url}: {e}")
+                    
+                    # REAL-TIME ERROR UPDATE
+                    if progress_callback and current_chunk is not None:
+                        row_index = None
+                        for idx, (_, chunk_row) in enumerate(current_chunk.iterrows()):
+                            if str(chunk_row[url_column]) == str(url):
+                                row_index = idx
+                                break
+                        
+                        if row_index is not None:
+                            progress_callback(global_processed[0] + processed_in_chunk + 1, 
+                                            total_estimated_rows, 
+                                            global_success[0] + success_in_chunk,
+                                            {row_index: (False, error_msg)})
 
         with lock:
             processed_in_chunk += 1
@@ -262,9 +304,9 @@ def process_chunk(
             if result["screenshot_success"] or result["content_screenshot_success"]:
                 global_success[0] += 1
 
-            # ADD PROGRESS CALLBACK HERE
+            # Update general progress (without specific row status)
             if progress_callback:
-                progress_callback(global_processed[0], total_estimated_rows, global_success[0])
+                progress_callback(global_processed[0], total_estimated_rows, global_success[0], {})
 
             if elapsed > 0:
                 time_window.append(elapsed)
@@ -284,6 +326,7 @@ def process_chunk(
 
         return result
 
+    # KEEP THIS PART UNCHANGED - ThreadPoolExecutor section
     results_list = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(worker, row): row for _, row in chunk.iterrows()}
@@ -346,7 +389,7 @@ def process_csv_screenshots(
     
     # ADD INITIAL PROGRESS CALLBACK
     if progress_callback:
-        progress_callback(0, total_estimated_rows, 0)
+        progress_callback(0, total_estimated_rows, 0, {})
 
     global_processed = [0]
     global_success = [0]
@@ -402,7 +445,8 @@ def process_csv_screenshots(
             screenshot_type=screenshot_type,
             content_selector=content_selector,
             progress_interval=progress_interval,
-            progress_callback=progress_callback  # ADD THIS
+            progress_callback=progress_callback,  # ADD THIS
+            current_chunk=chunk
         )
 
         results_df = pd.DataFrame(results)
@@ -417,8 +461,8 @@ def process_csv_screenshots(
     
     # ADD FINAL PROGRESS CALLBACK
     if progress_callback:
-        progress_callback(global_processed[0], total_estimated_rows, global_success[0])
-    
+        progress_callback(global_processed[0], total_estimated_rows, global_success[0], {})
+
     print(f"Results CSV saved to: {results_csv_path}")
     print(f"⏱ Total time taken: {elapsed:.2f} seconds ({elapsed/60:.2f} minutes)")
 

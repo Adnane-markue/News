@@ -6,3 +6,5 @@ articles*
 urls_problem.csv
 support_titres.txt
 logs/
+
+src/tools/ui_test.py
