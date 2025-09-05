@@ -22,8 +22,8 @@ A comprehensive tool for scraping news articles from Moroccan/Arabic news websit
 Clone the repository
 
 ```bash
-git clone <your-repo-url>
-cd news
+git clone git@github.com:Adnane-markue/News.git
+cd News
 ```
 Install dependencies
 
@@ -32,7 +32,7 @@ pip install -r requirements.txt
 ```
 ## 🏗️ Project Structure
 ```
-news/
+News/
 ├─ README.md
 ├─ requirements.txt
 ├─ run_scraper.py                  # CLI entry point
