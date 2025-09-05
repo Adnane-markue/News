@@ -65,16 +65,17 @@ def round_robin_rows(df: pd.DataFrame, url_column: str, support_column: Optional
 
     return df.loc[ordered_indices].drop(columns=["__group__"])
 
-def get_domain_selector(url: str) -> Optional[str]:
-    """Return a content selector for the URL's domain if available"""
+def get_domain_selectors(url: str) -> List[str]:
+    """Return a list of content selectors for the URL's domain if available"""
     from src.tools.screenshots import DOMAIN_SELECTORS
     domain = urlparse(url).netloc
-    selectors = DOMAIN_SELECTORS.get(domain)
-    if selectors:
-        return ", ".join(selectors)  # Convert list to comma-separated string
-    return None
+    selectors = DOMAIN_SELECTORS.get(domain, [])
+    if isinstance(selectors, str):
+        return [selectors]
+    return selectors or []
 
-def take_article_only(url: str, output_dir: str, filename: str, selector: Optional[str] = None) -> Optional[str]:
+
+def take_article_only(url: str, output_dir: str, filename: str, selector: Optional[str] = None, format: str = 'png') -> Optional[str]:
     """
     Take article-only screenshot for Moroccan/Arabic news sites.
     Optimized but keeps general Moroccan selectors as fallback.
@@ -83,38 +84,36 @@ def take_article_only(url: str, output_dir: str, filename: str, selector: Option
 
     # 1. Use provided selector first (highest priority - from command line)
     if selector:
-        content_path = take_content_screenshot(url, output_dir, filename, selector=selector)
+        content_path = take_content_screenshot(url, output_dir, filename, selector=selector, format=format)
         if content_path:
             print(f"✓ Article-only screenshot saved using provided selector: {selector}")
             return content_path
 
-    # 2. Try domain-specific selectors from unified DOMAIN_SELECTORS
-    domain_selector = get_domain_selector(url)
-    if domain_selector:
-        content_path = take_content_screenshot(url, output_dir, filename, selector=domain_selector)
+    # 2. Try domain-specific selectors (loop through them in priority order)
+    domain_selectors = get_domain_selectors(url)
+    for sel in domain_selectors:
+        content_path = take_content_screenshot(url, output_dir, filename, selector=sel, format=format)
         if content_path:
-            print(f"✓ Article-only screenshot saved using domain selector: {domain_selector}")
+            print(f"✓ Article-only screenshot saved using domain selector: {sel}")
             return content_path
 
     # 3. KEEP THIS: General Moroccan/Arabic selectors (excellent fallback)
-    selectors = [
+    generic_selectors = [
         'article', '.details-content', '.news-details', '.news-body',
         '.article-body', '.post-content', '.story-content'
     ]
 
-    for sel in selectors:
-        content_path = take_content_screenshot(url, output_dir, filename, selector=sel)
+    for sel in generic_selectors:
+        content_path = take_content_screenshot(url, output_dir, filename, selector=sel, format=format)
         if content_path:
             print(f"✓ Article-only screenshot saved using general selector: {sel}")
-            return content_path  # return immediately when successful
+            return content_path
 
     # 4. Final fallback: smart detection (no selector - uses fast detection internally)
-    content_path = take_content_screenshot(url, output_dir, filename)
+    content_path = take_content_screenshot(url, output_dir, filename, format=format)
     if content_path:
         print("✓ Article-only screenshot saved using smart detection")
     return content_path
-
-
 
 def process_chunk(
     chunk: pd.DataFrame,
@@ -131,8 +130,9 @@ def process_chunk(
     screenshot_type: str,
     content_selector: Optional[str] = None,
     progress_interval: Optional[int] = None,
-    progress_callback: Optional[Callable] = None,  # Change to comma
-    current_chunk: Optional[pd.DataFrame] = None  # ADD THIS
+    progress_callback: Optional[Callable] = None,
+    current_chunk: Optional[pd.DataFrame] = None,
+    image_format: str = 'png'  # ADD THIS PARAMETER
 ) -> List[dict]:
     """Process a chunk of the CSV file with accurate ETA calculation."""
     
@@ -189,14 +189,14 @@ def process_chunk(
             domain = get_domain(url)
             result["domain"] = domain
             
-            # Generate filename
+            # Generate filename with correct extension
             if filename_column and filename_column in row and pd.notna(row[filename_column]):
                 base_filename = sanitize_filename(row[filename_column])
-                filename = f"{base_filename}.png"
+                filename = f"{base_filename}.{image_format}"  # CHANGE THIS LINE
             else:
                 from hashlib import md5
                 url_hash = md5(url.encode()).hexdigest()[:12]
-                filename = f"screenshot_{url_hash}.png"
+                filename = f"screenshot_{url_hash}.{image_format}"  # CHANGE THIS LINE
 
             # output directory (support_titre subfolders if needed)
             final_output_dir = output_dir
@@ -207,20 +207,20 @@ def process_chunk(
                 final_output_dir = website_dir
 
             # Get selector for domain if exists
-            domain_selector = get_domain_selector(url)
+            domain_selector = get_domain_selectors(url)
 
             # domain lock
             dlock = acquire_domain_lock(domain)
             with dlock:
                 try:
                     if screenshot_type == 'fullpage':
-                        screenshot_path = take_screenshot(url, final_output_dir, filename)
+                        screenshot_path = take_screenshot(url, final_output_dir, filename, format=image_format)  # ADD format
                         success = screenshot_path is not None
                         if not success:
                             error_msg = "Échec de la capture complète"
 
                     elif screenshot_type == 'content':
-                        content_path = take_article_only(url, final_output_dir, filename, selector=domain_selector)
+                        content_path = take_article_only(url, final_output_dir, filename, selector=domain_selector, format=image_format)  # ADD format
                         success = content_path is not None
                         if not success:
                             error_msg = "Échec de la capture de contenu"
@@ -231,8 +231,8 @@ def process_chunk(
                         os.makedirs(fullpage_dir, exist_ok=True)
                         os.makedirs(content_dir, exist_ok=True)
 
-                        screenshot_path = take_screenshot(url, fullpage_dir, filename)
-                        content_path = take_article_only(url, content_dir, filename, selector=domain_selector)
+                        screenshot_path = take_screenshot(url, fullpage_dir, filename, format=image_format)  # ADD format
+                        content_path = take_article_only(url, content_dir, filename, selector=domain_selector, format=image_format)  # ADD format
                         success = (screenshot_path is not None) or (content_path is not None)
                         if not success:
                             error_msg = "Échec des deux captures"
@@ -362,7 +362,8 @@ def process_csv_screenshots(
     content_selector: Optional[str] = None,
     progress_interval: Optional[int] = None,
     start_row: int = 0,
-    progress_callback: Optional[Callable] = None  # ADD THIS
+    progress_callback: Optional[Callable] = None,
+    image_format: str = 'png'  # ADD THIS PARAMETER
 ) -> str:
     os.makedirs(output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -445,8 +446,9 @@ def process_csv_screenshots(
             screenshot_type=screenshot_type,
             content_selector=content_selector,
             progress_interval=progress_interval,
-            progress_callback=progress_callback,  # ADD THIS
-            current_chunk=chunk
+            progress_callback=progress_callback,
+            current_chunk=chunk,
+            image_format=image_format  # ADD THIS
         )
 
         results_df = pd.DataFrame(results)
@@ -507,6 +509,8 @@ def main():
                        help='Type of screenshot to take: fullpage, content, or both')
     parser.add_argument('--content-selector', help='CSS selector for content area (e.g., "article, .content, main")')
     parser.add_argument('--progress-interval', type=int, help='Force progress reporting every N URLs (overrides auto)')
+    parser.add_argument('--image-format', choices=['png', 'jpeg', 'webp'], default='png',  # ADD THIS
+                       help='Image format for screenshots: png, jpeg, or webp (default: png)')  # ADD THIS
 
     args = parser.parse_args()
     delay = 0 if args.no_delay else args.delay
@@ -526,7 +530,8 @@ def main():
             screenshot_type=args.screenshot_type,
             content_selector=args.content_selector,
             progress_interval=args.progress_interval,
-            start_row=args.start_row
+            start_row=args.start_row,
+            image_format=args.image_format  # ADD THIS
         )
     except Exception as e:
         print(f"Error occurred: {e}")

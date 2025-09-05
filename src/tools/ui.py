@@ -31,7 +31,7 @@ class ParameterDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Paramètres de capture")
         self.setModal(True)
-        self.resize(400, 300)
+        self.resize(400, 350)
         
         layout = QVBoxLayout(self)
         
@@ -75,6 +75,12 @@ class ParameterDialog(QDialog):
         self.screenshot_type_combo.addItems(["fullpage", "content", "both"])
         processing_layout.addWidget(self.screenshot_type_combo, 4, 1)
         
+        # NEW: Image format selection
+        processing_layout.addWidget(QLabel("Format image:"), 5, 0)
+        self.image_format_combo = QComboBox()
+        self.image_format_combo.addItems(["png", "jpeg", "webp"])
+        processing_layout.addWidget(self.image_format_combo, 5, 1)
+        
         processing_group.setLayout(processing_layout)
         layout.addWidget(processing_group)
         
@@ -83,6 +89,10 @@ class ParameterDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        
+        # Check if parent has dark mode enabled
+        if parent and hasattr(parent, 'dark_mode_enabled') and parent.dark_mode_enabled:
+            self.setStyleSheet(parent.get_dark_mode_stylesheet())
     
     def get_parameters(self):
         return {
@@ -90,7 +100,8 @@ class ParameterDialog(QDialog):
             'max_workers': self.max_workers_spin.value(),
             'delay': self.delay_spin.value(),
             'start_row': self.start_row_spin.value(),
-            'screenshot_type': self.screenshot_type_combo.currentText()
+            'screenshot_type': self.screenshot_type_combo.currentText(),
+            'image_format': self.image_format_combo.currentText()
         }
 
 # --- API Connection Dialog ---
@@ -240,7 +251,7 @@ class CSVProcessorWorker(QThread):
                  filename_column: Optional[str], support_column: Optional[str],
                  batch_size: int, delay: float, max_workers: int, 
                  screenshot_type: str, start_row: int, selected_rows: List[int],
-                 row_mapping: Dict[str, int]):
+                 row_mapping: Dict[str, int], image_format: str = "png"):
         super().__init__()
         self.csv_path = csv_path
         self.url_column = url_column
@@ -254,6 +265,7 @@ class CSVProcessorWorker(QThread):
         self.start_row = start_row
         self.selected_rows = selected_rows
         self.row_mapping = row_mapping
+        self.image_format = image_format
         self.row_status = {}  # {row_index: (success_status, error_message)}
         self.df = None  # Store the dataframe for real-time mapping
 
@@ -315,7 +327,8 @@ class CSVProcessorWorker(QThread):
                 max_workers=self.max_workers,
                 screenshot_type=self.screenshot_type,
                 start_row=0,
-                progress_callback=progress_callback  # REAL-TIME callback!
+                progress_callback=progress_callback,  # REAL-TIME callback!
+                image_format=self.image_format
             )
             
             # After processing, read the results to get final status
@@ -373,11 +386,14 @@ class ColorizedPandasModel(QAbstractTableModel):
             if row in self.processed_rows:
                 success_status, _ = self.processed_rows[row]
                 if success_status:
-                    return QBrush(QColor(200, 255, 200))  # Light green for success
+                    # Light green for success (adjust for dark mode)
+                    return QBrush(QColor(76, 175, 80))  # Brighter green
                 else:
-                    return QBrush(QColor(255, 200, 200))  # Light red for failure
+                    # Light red for failure (adjust for dark mode)
+                    return QBrush(QColor(244, 67, 54))  # Brighter red
             elif row in self.selected_rows:
-                return QBrush(QColor(200, 200, 255))  # Light blue for selected
+                # Light blue for selected (adjust for dark mode)
+                return QBrush(QColor(66, 133, 244))  # Brighter blue
                 
         # Add tooltip for error messages
         elif role == Qt.ToolTipRole:
@@ -475,11 +491,15 @@ class ScreenshotUI(QMainWindow):
         self.start_button = QPushButton("Démarrer capture")
         self.export_button = QPushButton("Exporter résultat")
 
+        # ADD DARK MODE BUTTON
+        self.dark_mode_button = QPushButton("🌙 Mode Sombre")
+
         button_layout.addWidget(self.select_all_button)
         button_layout.addWidget(self.deselect_button)
         button_layout.addWidget(self.remove_selected_button)
         button_layout.addWidget(self.start_button)
         button_layout.addWidget(self.export_button)
+        button_layout.addWidget(self.dark_mode_button)  # ADD THIS LINE
 
         layout.addLayout(button_layout)
 
@@ -506,6 +526,9 @@ class ScreenshotUI(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Prêt")
+        
+        # Initialize dark mode state
+        self.dark_mode_enabled = False
 
         # Setup menu bar
         self.setup_menus()
@@ -517,6 +540,7 @@ class ScreenshotUI(QMainWindow):
         self.start_button.clicked.connect(self.run_capture)
         self.export_button.clicked.connect(self.export_results)
         self.filter_input.textChanged.connect(self.apply_filter)
+        self.dark_mode_button.clicked.connect(self.toggle_dark_mode)
 
         # Placeholder model
         self.model = None
@@ -849,7 +873,8 @@ class ScreenshotUI(QMainWindow):
             screenshot_type=parameters['screenshot_type'],
             start_row=parameters['start_row'],
             selected_rows=selected_rows if not process_all else [],
-            row_mapping=self.row_mapping
+            row_mapping=self.row_mapping,
+            image_format=parameters['image_format']
         )
         
         # Connect worker signals
@@ -968,6 +993,130 @@ class ScreenshotUI(QMainWindow):
                 
             except Exception as e:
                 QMessageBox.critical(self, "Erreur", f"Erreur lors de l'export: {str(e)}")
+                
+    def get_dark_mode_stylesheet(self):
+        """Return dark mode stylesheet"""
+        return """
+        QMainWindow, QDialog, QWidget {
+            background-color: #2b2b2b;
+            color: #ffffff;
+            border: none;
+        }
+        
+        QTableView {
+            background-color: #3c3c3c;
+            color: #ffffff;
+            gridline-color: #555555;
+            alternate-background-color: #353535;
+        }
+        
+        QTableView::item:selected {
+            background-color: #4a76b8;
+            color: #ffffff;
+        }
+        
+        QHeaderView::section {
+            background-color: #353535;
+            color: #ffffff;
+            padding: 4px;
+            border: 1px solid #555555;
+        }
+        
+        QPushButton {
+            background-color: #4a4a4a;
+            color: #ffffff;
+            border: 1px solid #555555;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        
+        QPushButton:hover {
+            background-color: #5a5a5a;
+            border: 1px solid #666666;
+        }
+        
+        QPushButton:pressed {
+            background-color: #3a3a3a;
+        }
+        
+        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+            background-color: #3c3c3c;
+            color: #ffffff;
+            border: 1px solid #555555;
+            padding: 3px;
+            border-radius: 3px;
+        }
+        
+        QComboBox QAbstractItemView {
+            background-color: #3c3c3c;
+            color: #ffffff;
+            selection-background-color: #4a76b8;
+        }
+        
+        QProgressBar {
+            border: 1px solid #555555;
+            border-radius: 3px;
+            text-align: center;
+            color: #ffffff;
+        }
+        
+        QProgressBar::chunk {
+            background-color: #4a76b8;
+            width: 10px;
+        }
+        
+        QGroupBox {
+            font-weight: bold;
+            border: 1px solid #555555;
+            border-radius: 5px;
+            margin-top: 1ex;
+            padding-top: 10px;
+        }
+        
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 5px 0 5px;
+            color: #ffffff;
+        }
+        
+        QStatusBar {
+            background-color: #353535;
+            color: #ffffff;
+        }
+        
+        QMenuBar {
+            background-color: #353535;
+            color: #ffffff;
+        }
+        
+        QMenuBar::item:selected {
+            background-color: #4a76b8;
+        }
+        
+        QMenu {
+            background-color: #3c3c3c;
+            color: #ffffff;
+            border: 1px solid #555555;
+        }
+        
+        QMenu::item:selected {
+            background-color: #4a76b8;
+        }
+        """
+    
+    def toggle_dark_mode(self):
+        """Toggle between light and dark mode"""
+        self.dark_mode_enabled = not self.dark_mode_enabled
+        
+        if self.dark_mode_enabled:
+            self.setStyleSheet(self.get_dark_mode_stylesheet())
+            self.dark_mode_button.setText("☀️ Mode Clair")
+            self.status_bar.showMessage("Mode sombre activé")
+        else:
+            self.setStyleSheet("")  # Reset to default light theme
+            self.dark_mode_button.setText("🌙 Mode Sombre")
+            self.status_bar.showMessage("Mode clair activé")
 
     def closeEvent(self, event):
         """Handle window close event - stop worker if running"""

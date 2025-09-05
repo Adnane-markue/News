@@ -75,7 +75,7 @@ def get_domain_wait_time(url):
     domain = urlparse(url).netloc.lower()
     return DOMAIN_TIMING.get(domain, 2000)  # Default 2 seconds
 
-def take_screenshot(url: str, output_dir: str, filename: str) -> Optional[str]:
+def take_screenshot(url: str, output_dir: str, filename: str, format: str = 'png') -> Optional[str]:
     """
     Take screenshot of a webpage and save to file
     Returns: path to saved screenshot or None if failed
@@ -152,13 +152,27 @@ def take_screenshot(url: str, output_dir: str, filename: str) -> Optional[str]:
             # Create screenshots directory
             os.makedirs(output_dir, exist_ok=True)
 
-            # Generate filename
+            # Generate filename with correct extension
             if not filename:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"screenshot_{timestamp}.png"
+                filename = f"screenshot_{timestamp}.{format}"
+            elif not filename.endswith(f'.{format}'):
+                # Ensure filename has the correct extension
+                filename = f"{os.path.splitext(filename)[0]}.{format}"
 
             screenshot_path = os.path.join(output_dir, filename)
-            page.screenshot(path=screenshot_path, full_page=True)
+            
+            # Configure screenshot options based on format
+            screenshot_options = {
+                'path': screenshot_path,
+                'full_page': True
+            }
+            
+            # Only specify type if not default PNG
+            if format != 'png':
+                screenshot_options['type'] = format
+                
+            page.screenshot(**screenshot_options)
 
             browser.close()
             return screenshot_path
@@ -374,7 +388,7 @@ def smart_article_detection(page, url=None):
         print(f"⚠ Smart detection failed: {e}")
         return None
 
-def take_complete_article_screenshot(page, screenshot_path):
+def take_complete_article_screenshot(page, screenshot_path, format: str = 'png'):
     """Smarter fallback method to capture article content"""
     try:
         # First try to identify and isolate the main content area
@@ -428,7 +442,11 @@ def take_complete_article_screenshot(page, screenshot_path):
             try:
                 box = main_content.bounding_box()
                 if box and box['height'] > 500:
-                    main_content.screenshot(path=screenshot_path)
+                    # Configure screenshot options based on format
+                    screenshot_options = {'path': screenshot_path}
+                    if format != 'png':
+                        screenshot_options['type'] = format
+                    main_content.screenshot(**screenshot_options)
                     print("✓ Isolated main content screenshot")
                     return
             except:
@@ -437,15 +455,33 @@ def take_complete_article_screenshot(page, screenshot_path):
         # Final fallback: full page but try to scroll to content
         page.evaluate("window.scrollTo(0, 200)")  # Scroll past header
         page.wait_for_timeout(500)
-        page.screenshot(path=screenshot_path, full_page=True)
+        
+        # Configure screenshot options based on format
+        screenshot_options = {
+            'path': screenshot_path,
+            'full_page': True
+        }
+        if format != 'png':
+            screenshot_options['type'] = format
+            
+        page.screenshot(**screenshot_options)
         print("✓ Full page screenshot (cleaned)")
         
     except Exception as e:
         print(f"⚠ Fallback method failed: {e}")
-        page.screenshot(path=screenshot_path, full_page=True)
+        
+        # Configure screenshot options based on format for fallback
+        screenshot_options = {
+            'path': screenshot_path,
+            'full_page': True
+        }
+        if format != 'png':
+            screenshot_options['type'] = format
+            
+        page.screenshot(**screenshot_options)
         print("✓ Regular full page screenshot saved")
         
-def take_content_screenshot(url: str, output_dir: str, filename: str, selector: Optional[str] = None) -> Optional[str]:
+def take_content_screenshot(url: str, output_dir: str, filename: str, selector: Optional[str] = None, format: str = 'png') -> Optional[str]:
     """
     Take screenshot of the main article content only.
     """
@@ -636,7 +672,11 @@ def take_content_screenshot(url: str, output_dir: str, filename: str, selector: 
             os.makedirs(output_dir, exist_ok=True)
             if not filename:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"content_screenshot_{timestamp}.png"
+                filename = f"content_screenshot_{timestamp}.{format}"
+            elif not filename.endswith(f'.{format}'):
+                # Ensure filename has the correct extension
+                filename = f"{os.path.splitext(filename)[0]}.{format}"
+                
             screenshot_path = os.path.join(output_dir, filename)
 
             page.evaluate("""
@@ -672,7 +712,13 @@ def take_content_screenshot(url: str, output_dir: str, filename: str, selector: 
                 try:
                     content_element.scroll_into_view_if_needed()
                     page.wait_for_timeout(500)
-                    content_element.screenshot(path=screenshot_path)
+                    
+                    # Configure screenshot options based on format
+                    screenshot_options = {'path': screenshot_path}
+                    if format != 'png':
+                        screenshot_options['type'] = format
+                        
+                    content_element.screenshot(**screenshot_options)
                     print(f"✓ Article-only screenshot saved: {filename}")
                     # --- ADD TIMING METRICS ---
                     total_time = time.time() - start_time
@@ -689,7 +735,13 @@ def take_content_screenshot(url: str, output_dir: str, filename: str, selector: 
                     if main_img:
                         main_img.scroll_into_view_if_needed()
                         page.wait_for_timeout(500)
-                        main_img.screenshot(path=screenshot_path)
+                        
+                        # Configure screenshot options based on format
+                        screenshot_options = {'path': screenshot_path}
+                        if format != 'png':
+                            screenshot_options['type'] = format
+                            
+                        main_img.screenshot(**screenshot_options)
                         print(f"✓ Image-only screenshot saved: {filename}")
                         # --- ADD TIMING METRICS ---
                         total_time = time.time() - start_time
@@ -700,7 +752,15 @@ def take_content_screenshot(url: str, output_dir: str, filename: str, selector: 
                     print(f"⚠ Failed image-only fallback: {e}")
 
             # Fallback: full page screenshot
-            page.screenshot(path=screenshot_path, full_page=True)
+            # Configure screenshot options based on format
+            screenshot_options = {
+                'path': screenshot_path,
+                'full_page': True
+            }
+            if format != 'png':
+                screenshot_options['type'] = format
+                
+            page.screenshot(**screenshot_options)
             print(f"✓ Fallback full page screenshot saved: {filename}")
             # --- ADD TIMING METRICS ---
             total_time = time.time() - start_time
